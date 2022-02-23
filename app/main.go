@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -40,33 +41,39 @@ func do(w http.ResponseWriter, req *http.Request) {
 	}
 	defer resp.Body.Close()
 
+	var version string
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
+		if strings.Contains(line, "downloadBox") && strings.Contains(line, "darwin-amd64.pkg") {
+			// strip line down to goX.YY.ZZ version
+			version = strings.TrimPrefix(
+				strings.TrimSuffix(line, `.darwin-amd64.pkg">`),
+				`<a class="download downloadBox" href="/dl/`)
+			dizmo.Infof(ctx, "latest version: %s", version)
+			break
+		}
+	}
+	if version == "" {
+		dizmo.Errorf(ctx, "no version found in go.dev/dl page")
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
 
-		if !strings.Contains(line, "downloadBox") ||
-			!strings.Contains(line, "darwin-amd64.pkg") {
-			// this isn't the line we're looking for
-			continue
+	err = fs.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		const collection = "goversion"
+		// see if this version exists in firestore
+		doc := fs.Doc(collection + "/" + version)
+		_, err := doc.Get(ctx)
+		if err != nil {
+			return fmt.Errorf("unable to fetch firestore document: %s", err)
 		}
 
-		// strip line down to goX.YY.ZZ version
-		version := strings.TrimPrefix(
-			strings.TrimSuffix(line, `.darwin-amd64.pkg">`),
-			`<a class="download downloadBox" href="/dl/`)
-
-		dizmo.Infof(ctx, "latest version: %s", version)
-
-		// see if this version exists in firestore
-		doc := fs.Doc("goversion/" + version)
-		_, err := doc.Get(ctx)
 		stat, _ := status.FromError(err)
 		switch {
 		case stat == nil:
 			// version already exists
 			dizmo.Infof(ctx, "current status matches latest: %s", version)
-			w.WriteHeader(http.StatusOK)
-			return
 		case stat.Code() == codes.NotFound:
 			// new version!
 			dizmo.Infof(ctx, "new version!")
@@ -75,34 +82,37 @@ func do(w http.ResponseWriter, req *http.Request) {
 			})
 			slackResp, err := http.Post(os.Getenv("SLACK_URL"), "application/json", bytes.NewReader(b))
 			if err != nil {
-				dizmo.Errorf(ctx, "unable to post slack message: %s", err)
-				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-				return
+				return fmt.Errorf("unable to post slack message: %s", err)
 			}
 			defer slackResp.Body.Close()
 
 			if slackResp.StatusCode != http.StatusOK {
 				b, _ = httputil.DumpResponse(slackResp, true)
-				dizmo.Infof(ctx, "non-200 slack response: %s", b)
-				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-				return
+				return fmt.Errorf("non-200 slack response: %s", b)
 			}
-
-			_, err = doc.Create(ctx, map[string]string{
+			docs, err := fs.Collection(collection).DocumentRefs(ctx).GetAll()
+			if err != nil {
+				return fmt.Errorf("unable to delete old version %q from firestore: %s", doc.Path, err)
+			}
+			for _, docref := range docs {
+				_, err = docref.Delete(ctx)
+				if err != nil {
+					return fmt.Errorf("unable to delete old version %q from firestore: %s", docref.Path, err)
+				}
+			}
+			_, err = fs.Doc("goversion/"+version).Create(ctx, map[string]string{
 				"version": version,
 			})
 			if err != nil {
-				dizmo.Errorf(ctx, "unable to write new version to firestore: %s", err)
-				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-				return
+				return fmt.Errorf("unable to write new version to firestore: %s", err)
 			}
-			w.WriteHeader(http.StatusOK)
-			return
-		default:
-			// bad news bears
-			dizmo.Errorf(ctx, "unable to fetch firestore document: %s", err)
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
 		}
+		return nil
+	})
+	if err != nil {
+		dizmo.Errorf(ctx, err.Error())
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
+	w.WriteHeader(http.StatusOK)
 }
