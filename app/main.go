@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"os"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/firestore"
 	"github.com/darrenmcc/dizmo"
@@ -65,10 +66,6 @@ func do(w http.ResponseWriter, req *http.Request) {
 		// see if this version exists in firestore
 		doc := fs.Doc(collection + "/" + version)
 		_, err := doc.Get(ctx)
-		if err != nil {
-			return fmt.Errorf("unable to fetch firestore document: %s", err)
-		}
-
 		stat, _ := status.FromError(err)
 		switch {
 		case stat == nil:
@@ -102,10 +99,13 @@ func do(w http.ResponseWriter, req *http.Request) {
 			}
 			_, err = fs.Doc("goversion/"+version).Create(ctx, map[string]string{
 				"version": version,
+				"date":    time.Now().Format("2006-01-02"),
 			})
 			if err != nil {
 				return fmt.Errorf("unable to write new version to firestore: %s", err)
 			}
+		default:
+			return fmt.Errorf("unable to fetch firestore document: %s", err)
 		}
 		return nil
 	})
