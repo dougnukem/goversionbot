@@ -18,6 +18,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+var slackURL = mustEnv("SLACK_URL")
+
 func main() {
 	http.Handle("/", dizmo.LogMiddleware(http.HandlerFunc(do)))
 	http.ListenAndServe(":"+os.Getenv("PORT"), nil)
@@ -25,13 +27,6 @@ func main() {
 
 func do(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
-
-	fs, err := firestore.NewClient(ctx, dizmo.GoogleProjectID())
-	if err != nil {
-		dizmo.Errorf(ctx, "unable to init firestore client: %s", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
 
 	const dlURL = "https://go.dev/dl/"
 	resp, err := http.Get(dlURL)
@@ -55,8 +50,16 @@ func do(w http.ResponseWriter, req *http.Request) {
 			break
 		}
 	}
+
 	if version == "" {
 		dizmo.Errorf(ctx, "no version found in go.dev/dl page")
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	fs, err := firestore.NewClient(ctx, dizmo.GoogleProjectID())
+	if err != nil {
+		dizmo.Errorf(ctx, "unable to init firestore client: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -74,10 +77,16 @@ func do(w http.ResponseWriter, req *http.Request) {
 		case stat.Code() == codes.NotFound:
 			// new version!
 			dizmo.Infof(ctx, "new version!")
+
 			b, err := json.Marshal(map[string]string{
 				"text": fmt.Sprintf("A new Go version [%s] is available, download for MacOS here: %s%s.darwin-amd64.pkg", version, dlURL, version),
 			})
-			slackResp, err := http.Post(os.Getenv("SLACK_URL"), "application/json", bytes.NewReader(b))
+			if err != nil {
+				return fmt.Errorf("unable to marshal slack request: %s", err)
+			}
+
+			// post message to slack
+			slackResp, err := http.Post(slackURL, "application/json", bytes.NewReader(b))
 			if err != nil {
 				return fmt.Errorf("unable to post slack message: %s", err)
 			}
@@ -87,9 +96,11 @@ func do(w http.ResponseWriter, req *http.Request) {
 				b, _ = httputil.DumpResponse(slackResp, true)
 				return fmt.Errorf("non-200 slack response: %s", b)
 			}
+
+			// delete old version records
 			docs, err := fs.Collection(collection).DocumentRefs(ctx).GetAll()
 			if err != nil {
-				return fmt.Errorf("unable to delete old version %q from firestore: %s", doc.Path, err)
+				return fmt.Errorf("unable to get old version from firestore: %s", err)
 			}
 			for _, docref := range docs {
 				_, err = docref.Delete(ctx)
@@ -97,6 +108,8 @@ func do(w http.ResponseWriter, req *http.Request) {
 					return fmt.Errorf("unable to delete old version %q from firestore: %s", docref.Path, err)
 				}
 			}
+
+			// write new version record
 			_, err = fs.Doc("goversion/"+version).Create(ctx, map[string]string{
 				"version": version,
 				"date":    time.Now().Format("2006-01-02"),
@@ -115,4 +128,12 @@ func do(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func mustEnv(k string) string {
+	v := os.Getenv(k)
+	if v == "" {
+		panic(k + " not found in environment")
+	}
+	return v
 }
