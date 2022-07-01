@@ -22,7 +22,7 @@ var slackURL = mustEnv("SLACK_URL")
 
 func main() {
 	http.Handle("/", dizmo.LogMiddleware(http.HandlerFunc(do)))
-	http.ListenAndServe(":"+os.Getenv("PORT"), nil)
+	http.ListenAndServe(":"+mustEnv("PORT"), nil)
 }
 
 func do(w http.ResponseWriter, req *http.Request) {
