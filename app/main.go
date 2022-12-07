@@ -18,6 +18,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+const collection = "goversion"
+
 var slackURL = mustEnv("SLACK_URL")
 
 func main() {
@@ -65,9 +67,8 @@ func do(w http.ResponseWriter, req *http.Request) {
 	}
 
 	err = fs.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
-		const collection = "goversion"
 		// see if this version exists in firestore
-		doc := fs.Doc(collection + "/" + version)
+		doc := fs.Doc(key(version))
 		_, err := doc.Get(ctx)
 		stat, _ := status.FromError(err)
 		switch {
@@ -110,7 +111,7 @@ func do(w http.ResponseWriter, req *http.Request) {
 			}
 
 			// write new version record
-			_, err = fs.Doc("goversion/"+version).Create(ctx, map[string]string{
+			_, err = fs.Doc(key(version)).Create(ctx, map[string]string{
 				"version": version,
 				"date":    time.Now().Format("2006-01-02"),
 			})
@@ -128,6 +129,10 @@ func do(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func key(version string) string {
+	return collection + "/" + version
 }
 
 func mustEnv(k string) string {
