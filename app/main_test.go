@@ -8,10 +8,10 @@ import (
 
 // TestGoVersionMessage test GoVersionMessage.
 func TestGoVersionMessageMajor(t *testing.T) {
-	version := "go1.19.0"
+	version := "go1.19"
 	msg := getGoVersionMessage(version)
 
-	assert.Equal(t, `A new Go version [go1.19.0] is available, download for MacOS here: https://go.dev/dl/gov1.19.darwin-amd64.pkg <Release Notes|https://go.dev/doc/devel/release#gov1.19> <Github Milestone|https://github.com/golang/go/issues?q=milestone%3AGov1.19>`, msg, "Expected go version message for major to match")
+	assert.Equal(t, `A new Go version [go1.19] is available, download for MacOS here: https://go.dev/dl/gov1.19.darwin-amd64.pkg <Release Notes|https://go.dev/doc/devel/release#gov1.19> <Github Milestone|https://github.com/golang/go/issues?q=milestone%3AGov1.19>`, msg, "Expected go version message for major to match")
 }
 
 func TestGoVersionMessageMinorPatch(t *testing.T) {
