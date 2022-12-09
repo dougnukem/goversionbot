@@ -160,8 +160,6 @@ func getGoVersionMessage(version string) string {
 			// git milestone v1.19.0 URL is https://github.com/golang/go/issues?q=milestone%3AGo1.19
 			gitMilestoneURL = fmt.Sprintf("https://github.com/golang/go/issues?q=milestone%%3AGo%s", majorMinorVersion)
 		}
-	} else {
-		fmt.Printf("**** MAIN NOT valid semver %s\n", semVersion)
 	}
 
 	return fmt.Sprintf("A new Go version [%s] is available, download for MacOS here: %s%s.darwin-amd64.pkg <Release Notes|%s> <Github Milestone|%s>", version, dlURL, dlURLVersion, goDocReleaseNotesURL, gitMilestoneURL)
@@ -181,10 +179,8 @@ func mustEnv(k string) string {
 
 func isMinorRelease(version string) bool {
 	if !semver.IsValid(version) {
-		fmt.Printf("**** NOT valid semver\n")
 		return false
 	}
-	fmt.Printf("**** valid semver\n")
 
 	// compare 1.19.1 to the canonical 1.19.0 major/minor release if this is > then its a minor release <= 1 it's the same
 	majorReleaseVersion := semver.MajorMinor(version) + ".0"
