@@ -5,6 +5,9 @@ TAG = gcr.io/$(PROJ)/$(SERVICE)
 build: 
 	CGO_ENABLED=0 GOOS=linux go build -o ./app/server ./app 
 
+test: 
+	go test ./...
+
 docker-running:
 	@until docker info &> /dev/null; do echo 'waiting for docker...'; sleep 1; done && echo "docker started"
 
@@ -13,4 +16,4 @@ deploy: docker-running build
 	docker push $(TAG)
 	gcloud run deploy $(SERVICE) --image=$(TAG) --project=$(PROJ) --platform=managed --max-instances=1 --no-allow-unauthenticated
 
-.PHONY: build deploy
+.PHONY: build deploy test

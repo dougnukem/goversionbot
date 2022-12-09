@@ -13,24 +13,28 @@ import (
 	"time"
 
 	"cloud.google.com/go/firestore"
-	"github.com/darrenmcc/dizmo"
+	"golang.org/x/mod/semver"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/darrenmcc/dizmo"
 )
 
 const collection = "goversion"
 
-var slackURL = mustEnv("SLACK_URL")
+var slackURL string
 
 func main() {
+	slackURL = mustEnv("SLACK_URL")
 	http.Handle("/", dizmo.LogMiddleware(http.HandlerFunc(do)))
 	http.ListenAndServe(":"+mustEnv("PORT"), nil)
 }
 
+const dlURL = "https://go.dev/dl/"
+
 func do(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 
-	const dlURL = "https://go.dev/dl/"
 	resp, err := http.Get(dlURL)
 	if err != nil {
 		dizmo.Errorf(ctx, "unable to fetch %s: %s", dlURL, err)
@@ -78,9 +82,8 @@ func do(w http.ResponseWriter, req *http.Request) {
 		case stat.Code() == codes.NotFound:
 			// new version!
 			dizmo.Infof(ctx, "new version!")
-
 			b, err := json.Marshal(map[string]string{
-				"text": fmt.Sprintf("A new Go version [%s] is available, download for MacOS here: %s%s.darwin-amd64.pkg", version, dlURL, version),
+				"text": getGoVersionMessage(version),
 			})
 			if err != nil {
 				return fmt.Errorf("unable to marshal slack request: %s", err)
@@ -131,6 +134,39 @@ func do(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func getGoVersionMessage(version string) string {
+	// Show the github milestone issues in this release e.g.
+	// for minor release https://github.com/golang/go/issues?q=milestone%3AGo1.19.4+label%3ACherryPickApproved+
+	// for major releasehttps://github.com/golang/go/issues?q=milestone%3AGo1.19+
+	gitMilestoneURL := fmt.Sprintf("https://github.com/golang/go/issues?q=milestone%%3AGo%s+label%%3ACherryPickApproved+", version)
+
+	goDocReleaseNotesURL := "https://go.dev/doc/devel/release"
+	dlURLVersion := version
+	// valid semantic version go1.19.14 = v1.19.4
+	semVersion := "v" + strings.TrimPrefix(version, "go")
+	if semver.IsValid(semVersion) {
+		majorMinorVersion := semver.MajorMinor(semVersion)
+		if isMinorRelease(semVersion) {
+			// v1.19.4 URL is https://go.dev/doc/devel/release#go1.19.minor
+			goDocReleaseNotesURL = fmt.Sprintf("https://go.dev/doc/devel/release#go%s.minor", majorMinorVersion)
+			// v1.19.4 git milestone https://github.com/golang/go/issues?q=milestone%3AGo1.19.4+label%3ACherryPickApproved+
+			gitMilestoneURL = fmt.Sprintf("https://github.com/golang/go/issues?q=milestone%%3AGo%s+label%%3ACherryPickApproved+", version)
+		} else {
+
+			// for major versions the DL link for v1.19.0 is https://dl.google.com/go/go1.19.darwin-amd64.pkg
+			dlURLVersion = "go" + majorMinorVersion
+			// release notes v1.19.0 URL is https://go.dev/doc/devel/release#go1.19
+			goDocReleaseNotesURL = fmt.Sprintf("https://go.dev/doc/devel/release#go%s", majorMinorVersion)
+			// git milestone v1.19.0 URL is https://github.com/golang/go/issues?q=milestone%3AGo1.19
+			gitMilestoneURL = fmt.Sprintf("https://github.com/golang/go/issues?q=milestone%%3AGo%s", majorMinorVersion)
+		}
+	} else {
+		fmt.Printf("**** MAIN NOT valid semver %s\n", semVersion)
+	}
+
+	return fmt.Sprintf("A new Go version [%s] is available, download for MacOS here: %s%s.darwin-amd64.pkg <Release Notes|%s> <Github Milestone|%s>", version, dlURL, dlURLVersion, goDocReleaseNotesURL, gitMilestoneURL)
+}
+
 func key(version string) string {
 	return collection + "/" + version
 }
@@ -141,4 +177,16 @@ func mustEnv(k string) string {
 		panic(k + " not found in environment")
 	}
 	return v
+}
+
+func isMinorRelease(version string) bool {
+	if !semver.IsValid(version) {
+		fmt.Printf("**** NOT valid semver\n")
+		return false
+	}
+	fmt.Printf("**** valid semver\n")
+
+	// compare 1.19.1 to the canonical 1.19.0 major/minor release if this is > then its a minor release <= 1 it's the same
+	majorReleaseVersion := semver.MajorMinor(version) + ".0"
+	return semver.Compare(version, majorReleaseVersion) >= 1
 }
